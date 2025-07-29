@@ -22,7 +22,7 @@ buildscript {
     }
 }
 
-fun getCommitCount(): Int {
+fun calculateCommitCount(): Int {
     return try {
         val repo = FileRepository(rootProject.file(".git"))
         val git = Git(repo)
@@ -48,9 +48,9 @@ fun getCommitCount(): Int {
     }
 }
 
-val commitCount = getCommitCount()
+val commitCount = calculateCommitCount()
 
-fun getCoreInfo(): Pair<Int, String> {
+fun calculateCoreInfo(): Pair<Int, String> {
     return try {
         val coreGitDir = rootProject.file(".git/modules/core")
         if (coreGitDir.exists()) {
@@ -86,9 +86,9 @@ fun getCoreInfo(): Pair<Int, String> {
     }
 }
 
-val coreInfo = getCoreInfo()
-val coreCommitCount = coreInfo.first
-val coreLatestTag = coreInfo.second
+val coreInfoResult = calculateCoreInfo()
+val coreCommitCount = coreInfoResult.first
+val coreLatestTag = coreInfoResult.second
 
 // sync from https://github.com/LSPosed/LSPosed/blob/master/build.gradle.kts
 val defaultManagerPackageName by extra("org.lsposed.opatch")
