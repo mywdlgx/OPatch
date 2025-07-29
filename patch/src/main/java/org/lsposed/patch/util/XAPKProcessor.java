@@ -74,9 +74,14 @@ public class XAPKProcessor {
                 if (MANIFEST_JSON.equals(entryName)) {
                     parseManifestJson(outputFile, xapkInfo);
                 } else if (entryName.endsWith(".apk")) {
-                    if (xapkInfo.mainApkPath == null) {
+                    // Determine if this is the main APK or a split APK
+                    String fileName = new File(entryName).getName();
+                    if (fileName.equals("base.apk") ||
+                        (!fileName.startsWith("split_") && xapkInfo.mainApkPath == null)) {
+                        // This is the main APK
                         xapkInfo.mainApkPath = outputFile.getAbsolutePath();
                     } else {
+                        // This is a split APK
                         xapkInfo.splitApkPaths.add(outputFile.getAbsolutePath());
                     }
                 } else if (entryName.startsWith(ANDROID_OBB_DIR) && entryName.endsWith(".obb")) {
