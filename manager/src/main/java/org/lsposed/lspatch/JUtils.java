@@ -256,6 +256,9 @@ public class JUtils {
         try {
             Log.i("OPatchOutput", "Installing XAPK: " + xapkPath);
 
+            // Check if this is a patched XAPK that might have cached extraction info
+            // For now, we'll extract normally, but this could be optimized
+
             // Create temporary directory for XAPK extraction
             File tempDir = new File(context.getExternalCacheDir(), "xapk_install_" + System.currentTimeMillis());
             tempDir.mkdirs();

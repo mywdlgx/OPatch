@@ -31,9 +31,13 @@ public class XAPKProcessor {
         public String versionName;
         public int versionCode;
         public String mainApkPath;
+        public String mainApkOriginalName;  // 保存原始APK文件名
         public List<String> splitApkPaths = new ArrayList<>();
+        public List<String> splitApkOriginalNames = new ArrayList<>();  // 保存原始split APK文件名
         public List<String> obbPaths = new ArrayList<>();
+        public List<String> obbOriginalPaths = new ArrayList<>();  // 保存原始OBB相对路径
         public JsonObject originalManifest;
+        public File tempDir;  // 保存临时目录引用，方便安装时使用
     }
     
     /**
@@ -46,6 +50,7 @@ public class XAPKProcessor {
         
         tempDir.mkdirs();
         XAPKInfo xapkInfo = new XAPKInfo();
+        xapkInfo.tempDir = tempDir;
         
         try (ZipInputStream zis = new ZipInputStream(new FileInputStream(xapkFile))) {
             ZipEntry entry;
@@ -80,12 +85,15 @@ public class XAPKProcessor {
                         (!fileName.startsWith("split_") && xapkInfo.mainApkPath == null)) {
                         // This is the main APK
                         xapkInfo.mainApkPath = outputFile.getAbsolutePath();
+                        xapkInfo.mainApkOriginalName = entryName;  // 保存原始路径
                     } else {
                         // This is a split APK
                         xapkInfo.splitApkPaths.add(outputFile.getAbsolutePath());
+                        xapkInfo.splitApkOriginalNames.add(entryName);  // 保存原始路径
                     }
                 } else if (entryName.startsWith(ANDROID_OBB_DIR) && entryName.endsWith(".obb")) {
                     xapkInfo.obbPaths.add(outputFile.getAbsolutePath());
+                    xapkInfo.obbOriginalPaths.add(entryName);  // 保存原始相对路径
                 }
                 
                 zis.closeEntry();
@@ -128,29 +136,35 @@ public class XAPKProcessor {
     }
     
     /**
-     * Repack XAPK with patched APK
+     * Repack XAPK with patched APK, preserving original structure
      */
     public static void repackXAPK(XAPKInfo xapkInfo, File outputXapkFile, File tempDir) throws IOException {
         try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(outputXapkFile))) {
-            
+
             // Add manifest.json
             addFileToZip(zos, MANIFEST_JSON, xapkInfo.originalManifest.toString().getBytes(StandardCharsets.UTF_8));
-            
-            // Add main APK
+
+            // Add main APK with original name/path
             File mainApkFile = new File(xapkInfo.mainApkPath);
-            addFileToZip(zos, mainApkFile.getName(), mainApkFile);
-            
-            // Add split APKs
-            for (String splitApkPath : xapkInfo.splitApkPaths) {
-                File splitApkFile = new File(splitApkPath);
-                addFileToZip(zos, splitApkFile.getName(), splitApkFile);
+            String mainApkEntryName = xapkInfo.mainApkOriginalName != null ?
+                xapkInfo.mainApkOriginalName : mainApkFile.getName();
+            addFileToZip(zos, mainApkEntryName, mainApkFile);
+
+            // Add split APKs with original names/paths
+            for (int i = 0; i < xapkInfo.splitApkPaths.size(); i++) {
+                File splitApkFile = new File(xapkInfo.splitApkPaths.get(i));
+                String splitApkEntryName = i < xapkInfo.splitApkOriginalNames.size() ?
+                    xapkInfo.splitApkOriginalNames.get(i) : splitApkFile.getName();
+                addFileToZip(zos, splitApkEntryName, splitApkFile);
             }
-            
-            // Add OBB files
-            for (String obbPath : xapkInfo.obbPaths) {
-                File obbFile = new File(obbPath);
-                String relativePath = ANDROID_OBB_DIR + xapkInfo.packageName + "/" + obbFile.getName();
-                addFileToZip(zos, relativePath, obbFile);
+
+            // Add OBB files with original paths
+            for (int i = 0; i < xapkInfo.obbPaths.size(); i++) {
+                File obbFile = new File(xapkInfo.obbPaths.get(i));
+                String obbEntryPath = i < xapkInfo.obbOriginalPaths.size() ?
+                    xapkInfo.obbOriginalPaths.get(i) :
+                    (ANDROID_OBB_DIR + xapkInfo.packageName + "/" + obbFile.getName());
+                addFileToZip(zos, obbEntryPath, obbFile);
             }
         }
     }
@@ -183,6 +197,149 @@ public class XAPKProcessor {
         zos.closeEntry();
     }
     
+    /**
+     * Install XAPK directly from XAPKInfo (reuse extracted files)
+     * This avoids re-extracting the XAPK for installation
+     */
+    public static void installFromXAPKInfo(android.content.Context context, XAPKInfo xapkInfo) throws IOException {
+        java.util.List<java.io.File> apkFiles = new java.util.ArrayList<>();
+
+        // Add main APK
+        if (xapkInfo.mainApkPath != null) {
+            apkFiles.add(new java.io.File(xapkInfo.mainApkPath));
+        }
+
+        // Add split APKs
+        for (String splitApkPath : xapkInfo.splitApkPaths) {
+            apkFiles.add(new java.io.File(splitApkPath));
+        }
+
+        if (apkFiles.isEmpty()) {
+            throw new IOException("No APK files found in XAPK");
+        }
+
+        try {
+            // Install APK files
+            if (apkFiles.size() == 1) {
+                // Single APK installation
+                installSingleApkFromInfo(context, apkFiles.get(0));
+            } else {
+                // Multiple APKs installation
+                installMultipleApksFromInfo(context, apkFiles);
+            }
+
+            // Copy OBB files if they exist
+            if (!xapkInfo.obbPaths.isEmpty() && xapkInfo.packageName != null) {
+                copyObbFilesFromInfo(context, xapkInfo);
+            }
+
+        } catch (Exception e) {
+            throw new IOException("Failed to install XAPK: " + e.getMessage(), e);
+        }
+    }
+
+    private static void installSingleApkFromInfo(android.content.Context context, java.io.File apkFile) throws IOException {
+        // Use the same logic as JUtils.installSingleApk
+        String cachePath = context.getExternalCacheDir() + "/install.apk";
+        java.io.File cacheFile = new java.io.File(cachePath);
+        if (cacheFile.exists()) {
+            cacheFile.delete();
+        }
+
+        // Copy APK to cache
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(apkFile);
+             java.io.FileOutputStream fos = new java.io.FileOutputStream(cacheFile)) {
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = fis.read(buffer)) > 0) {
+                fos.write(buffer, 0, len);
+            }
+        }
+
+        // Create install intent
+        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+        intent.setFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+
+        android.net.Uri apkUri = androidx.core.content.FileProvider.getUriForFile(context,
+                context.getApplicationContext().getPackageName() + ".FileProvider", cacheFile);
+        intent.addCategory("android.intent.category.DEFAULT");
+        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+
+        context.startActivity(intent);
+    }
+
+    private static void installMultipleApksFromInfo(android.content.Context context, java.util.List<java.io.File> apkFiles) throws IOException {
+        // Use session-based installation for multiple APKs
+        try {
+            android.content.pm.PackageInstaller packageInstaller = context.getPackageManager().getPackageInstaller();
+
+            android.content.pm.PackageInstaller.SessionParams params =
+                new android.content.pm.PackageInstaller.SessionParams(android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+
+            int sessionId = packageInstaller.createSession(params);
+            android.content.pm.PackageInstaller.Session session = packageInstaller.openSession(sessionId);
+
+            // Add all APK files to session
+            for (int i = 0; i < apkFiles.size(); i++) {
+                java.io.File apkFile = apkFiles.get(i);
+                String apkName = i == 0 ? "base.apk" : "split_" + i + ".apk";
+
+                try (java.io.OutputStream out = session.openWrite(apkName, 0, apkFile.length());
+                     java.io.FileInputStream in = new java.io.FileInputStream(apkFile)) {
+
+                    byte[] buffer = new byte[8192];
+                    int len;
+                    while ((len = in.read(buffer)) > 0) {
+                        out.write(buffer, 0, len);
+                    }
+                    session.fsync(out);
+                }
+            }
+
+            // Create pending intent for installation result
+            android.content.Intent intent = new android.content.Intent(context, org.lsposed.lspatch.InstallResultReceiver.class);
+            android.app.PendingIntent pendingIntent = android.app.PendingIntent.getBroadcast(
+                context, 0, intent, android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+
+            session.commit(pendingIntent.getIntentSender());
+            session.close();
+
+        } catch (Exception e) {
+            // Fallback to single APK installation
+            if (!apkFiles.isEmpty()) {
+                installSingleApkFromInfo(context, apkFiles.get(0));
+            }
+        }
+    }
+
+    private static void copyObbFilesFromInfo(android.content.Context context, XAPKInfo xapkInfo) {
+        try {
+            java.io.File obbDir = new java.io.File(android.os.Environment.getExternalStorageDirectory(), "Android/obb");
+            java.io.File targetObbDir = new java.io.File(obbDir, xapkInfo.packageName);
+            targetObbDir.mkdirs();
+
+            for (String obbPath : xapkInfo.obbPaths) {
+                java.io.File obbFile = new java.io.File(obbPath);
+                if (obbFile.exists() && obbFile.getName().endsWith(".obb")) {
+                    java.io.File targetFile = new java.io.File(targetObbDir, obbFile.getName());
+
+                    try (java.io.FileInputStream fis = new java.io.FileInputStream(obbFile);
+                         java.io.FileOutputStream fos = new java.io.FileOutputStream(targetFile)) {
+                        byte[] buffer = new byte[8192];
+                        int len;
+                        while ((len = fis.read(buffer)) > 0) {
+                            fos.write(buffer, 0, len);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Log error but don't fail the installation
+            android.util.Log.e("XAPKProcessor", "Error copying OBB files: " + e.getMessage());
+        }
+    }
+
     /**
      * Clean up temporary directory
      */

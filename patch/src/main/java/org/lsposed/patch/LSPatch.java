@@ -406,6 +406,15 @@ public class LSPatch {
      * Patch XAPK file
      */
     public void patchXAPK(File srcXapkFile, File outputXapkFile) throws PatchError, IOException {
+        XAPKProcessor.XAPKInfo xapkInfo = patchXAPKAndReturnInfo(srcXapkFile, outputXapkFile);
+        // Clean up after patching
+        XAPKProcessor.cleanupTempDir(xapkInfo.tempDir);
+    }
+
+    /**
+     * Patch XAPK file and return XAPKInfo for potential reuse (e.g., for installation)
+     */
+    public XAPKProcessor.XAPKInfo patchXAPKAndReturnInfo(File srcXapkFile, File outputXapkFile) throws PatchError, IOException {
         if (!srcXapkFile.exists())
             throw new PatchError("The source XAPK file does not exist. Please provide a correct path.");
 
@@ -444,10 +453,15 @@ public class LSPatch {
             XAPKProcessor.repackXAPK(xapkInfo, outputXapkFile, tempDir);
 
             logger.i("XAPK patching completed successfully!");
+            logger.i("Output: " + outputXapkFile.getAbsolutePath());
+            logger.i("Note: You can install directly from extracted files to avoid re-extraction.");
 
-        } finally {
-            // Clean up temporary directory
+            return xapkInfo;  // Return info for potential reuse
+
+        } catch (Exception e) {
+            // Clean up on error
             XAPKProcessor.cleanupTempDir(tempDir);
+            throw e;
         }
     }
 }
