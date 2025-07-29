@@ -24,7 +24,11 @@ buildscript {
 
 val commitCount = run {
     val repo = FileRepository(rootProject.file(".git"))
-    val refId = repo.refDatabase.exactRef("refs/remotes/origin/master").objectId!!
+    // Try main branch first, then master as fallback
+    val refId = repo.refDatabase.exactRef("refs/remotes/origin/main")?.objectId
+        ?: repo.refDatabase.exactRef("refs/remotes/origin/master")?.objectId
+        ?: repo.refDatabase.exactRef("HEAD")?.objectId
+        ?: throw IllegalStateException("Cannot find valid Git reference")
     Git(repo).log().add(refId).call().count()
 }
 
@@ -34,7 +38,7 @@ val (coreCommitCount, coreLatestTag) = FileRepositoryBuilder().setGitDir(rootPro
             val git = Git(repo)
             val coreCommitCount =
                 git.log()
-                    .add(repo.refDatabase.exactRef("HEAD").objectId)
+                    .add(repo.refDatabase.exactRef("HEAD")?.objectId ?: repo.resolve("HEAD"))
                     .call().count() + 4200
             val ver = git.describe()
                 .setTags(true)
