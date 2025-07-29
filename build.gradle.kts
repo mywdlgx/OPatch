@@ -22,8 +22,8 @@ buildscript {
     }
 }
 
-val commitCount = run {
-    try {
+fun getCommitCount(): Int {
+    return try {
         val repo = FileRepository(rootProject.file(".git"))
         val git = Git(repo)
 
@@ -48,38 +48,47 @@ val commitCount = run {
     }
 }
 
-val (coreCommitCount, coreLatestTag) = try {
-    val coreGitDir = rootProject.file(".git/modules/core")
-    if (coreGitDir.exists()) {
-        FileRepositoryBuilder().setGitDir(coreGitDir)
-            .runCatching {
-                build().use { repo ->
-                    val git = Git(repo)
-                    val headRef = repo.refDatabase.exactRef("HEAD")?.objectId
-                        ?: repo.resolve("HEAD")
+val commitCount = getCommitCount()
 
-                    val coreCommitCount = if (headRef != null) {
-                        git.log().add(headRef).call().count() + 4200
-                    } else {
-                        git.log().call().count() + 4200
-                    }
+fun getCoreInfo(): Pair<Int, String> {
+    return try {
+        val coreGitDir = rootProject.file(".git/modules/core")
+        if (coreGitDir.exists()) {
+            val result = FileRepositoryBuilder().setGitDir(coreGitDir)
+                .runCatching {
+                    build().use { repo ->
+                        val git = Git(repo)
+                        val headRef = repo.refDatabase.exactRef("HEAD")?.objectId
+                            ?: repo.resolve("HEAD")
 
-                    val ver = try {
-                        git.describe().setTags(true).setAbbrev(0).call().removePrefix("v")
-                    } catch (e: Exception) {
-                        "1.0"
+                        val coreCommitCount = if (headRef != null) {
+                            git.log().add(headRef).call().count() + 4200
+                        } else {
+                            git.log().call().count() + 4200
+                        }
+
+                        val ver = try {
+                            git.describe().setTags(true).setAbbrev(0).call().removePrefix("v")
+                        } catch (e: Exception) {
+                            "1.0"
+                        }
+                        coreCommitCount to ver
                     }
-                    coreCommitCount to ver
-                }
-            }.getOrNull() ?: (4201 to "1.0")
-    } else {
-        println("Warning: Core submodule not found, using default values")
+                }.getOrNull()
+            result ?: (4201 to "1.0")
+        } else {
+            println("Warning: Core submodule not found, using default values")
+            (4201 to "1.0")
+        }
+    } catch (e: Exception) {
+        println("Warning: Could not determine core module info: ${e.message}")
         (4201 to "1.0")
     }
-} catch (e: Exception) {
-    println("Warning: Could not determine core module info: ${e.message}")
-    (4201 to "1.0")
 }
+
+val coreInfo = getCoreInfo()
+val coreCommitCount = coreInfo.first
+val coreLatestTag = coreInfo.second
 
 // sync from https://github.com/LSPosed/LSPosed/blob/master/build.gradle.kts
 val defaultManagerPackageName by extra("org.lsposed.opatch")
