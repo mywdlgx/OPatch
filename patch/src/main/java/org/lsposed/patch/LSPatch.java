@@ -30,6 +30,8 @@ import org.lsposed.patch.util.ApkSignatureHelper;
 import org.lsposed.patch.util.JavaLogger;
 import org.lsposed.patch.util.Logger;
 import org.lsposed.patch.util.ManifestParser;
+import org.lsposed.patch.util.XAPKProcessor;
+import com.wind.meditor.utils.FileTypeUtils;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -157,24 +159,31 @@ public class LSPatch {
 
     public void doCommandLine() throws PatchError, IOException {
         for (var apk : apkPaths) {
-            File srcApkFile = new File(apk).getAbsoluteFile();
+            File srcFile = new File(apk).getAbsoluteFile();
 
-            String apkFileName = srcApkFile.getName();
+            String fileName = srcFile.getName();
+            boolean isXapk = FileTypeUtils.isXapkFile(srcFile.getAbsolutePath());
 
             var outputDir = new File(outputPath);
             outputDir.mkdirs();
 
+            String outputExtension = isXapk ? ".xapk" : ".apk";
             File outputFile = new File(outputDir, String.format(
-                    Locale.getDefault(), "%s-%d-opatched.apk",
-                    FilenameUtils.getBaseName(apkFileName),
-                    LSPConfig.instance.VERSION_CODE)
+                    Locale.getDefault(), "%s-%d-opatched%s",
+                    FilenameUtils.getBaseName(fileName),
+                    LSPConfig.instance.VERSION_CODE,
+                    outputExtension)
             ).getAbsoluteFile();
 
             if (outputFile.exists() && !forceOverwrite)
                 throw new PatchError(outputPath + " exists. Use --force to overwrite");
-            logger.i("Processing " + srcApkFile + " -> " + outputFile);
+            logger.i("Processing " + srcFile + " -> " + outputFile);
 
-            patch(srcApkFile, outputFile);
+            if (isXapk) {
+                patchXAPK(srcFile, outputFile);
+            } else {
+                patch(srcFile, outputFile);
+            }
         }
     }
 
@@ -391,5 +400,54 @@ public class LSPatch {
         os.flush();
         os.close();
         return os.toByteArray();
+    }
+
+    /**
+     * Patch XAPK file
+     */
+    public void patchXAPK(File srcXapkFile, File outputXapkFile) throws PatchError, IOException {
+        if (!srcXapkFile.exists())
+            throw new PatchError("The source XAPK file does not exist. Please provide a correct path.");
+
+        outputXapkFile.delete();
+
+        logger.d("XAPK path: " + srcXapkFile);
+        logger.i("Parsing XAPK file...");
+
+        // Create temporary directory for XAPK extraction
+        File tempDir = new File(System.getProperty("java.io.tmpdir"),
+                "lspatch_xapk_" + System.currentTimeMillis());
+
+        try {
+            // Extract XAPK
+            logger.i("Extracting XAPK...");
+            XAPKProcessor.XAPKInfo xapkInfo = XAPKProcessor.extractXAPK(srcXapkFile, tempDir);
+
+            logger.i("Found main APK: " + xapkInfo.mainApkPath);
+            logger.i("Package: " + xapkInfo.packageName);
+            logger.i("Version: " + xapkInfo.versionName + " (" + xapkInfo.versionCode + ")");
+
+            if (!xapkInfo.splitApkPaths.isEmpty()) {
+                logger.i("Found " + xapkInfo.splitApkPaths.size() + " split APKs");
+            }
+
+            if (!xapkInfo.obbPaths.isEmpty()) {
+                logger.i("Found " + xapkInfo.obbPaths.size() + " OBB files");
+            }
+
+            // Patch the main APK
+            logger.i("Patching main APK...");
+            XAPKProcessor.patchMainApk(xapkInfo, this, tempDir);
+
+            // Repack XAPK
+            logger.i("Repacking XAPK...");
+            XAPKProcessor.repackXAPK(xapkInfo, outputXapkFile, tempDir);
+
+            logger.i("XAPK patching completed successfully!");
+
+        } finally {
+            // Clean up temporary directory
+            XAPKProcessor.cleanupTempDir(tempDir);
+        }
     }
 }
