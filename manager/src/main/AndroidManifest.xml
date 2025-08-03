@@ -48,6 +48,11 @@
             android:name="org.lsposed.lspatch.manager.ModuleService"
             android:exported="true"
             tools:ignore="ExportedService" />
+
+        <receiver
+            android:name="org.lsposed.lspatch.InstallResultReceiver"
+            android:exported="false" />
+
         <provider
             android:authorities="org.lsposed.opatch.FileProvider"
             android:name="androidx.core.content.FileProvider"

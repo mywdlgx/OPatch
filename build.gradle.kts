@@ -22,26 +22,73 @@ buildscript {
     }
 }
 
-val commitCount = run {
-    val repo = FileRepository(rootProject.file(".git"))
-    val refId = repo.refDatabase.exactRef("refs/remotes/origin/master").objectId!!
-    Git(repo).log().add(refId).call().count()
+fun calculateCommitCount(): Int {
+    return try {
+        val repo = FileRepository(rootProject.file(".git"))
+        val git = Git(repo)
+
+        // Try different approaches to get commit count
+        val refId = repo.refDatabase.exactRef("refs/remotes/origin/main")?.objectId
+            ?: repo.refDatabase.exactRef("refs/remotes/origin/master")?.objectId
+            ?: repo.refDatabase.exactRef("refs/heads/main")?.objectId
+            ?: repo.refDatabase.exactRef("refs/heads/master")?.objectId
+            ?: repo.refDatabase.exactRef("HEAD")?.objectId
+            ?: repo.resolve("HEAD")
+
+        if (refId != null) {
+            git.log().add(refId).call().count()
+        } else {
+            // Fallback: try to get commit count from current branch
+            git.log().call().count()
+        }
+    } catch (e: Exception) {
+        println("Warning: Could not determine commit count from Git: ${e.message}")
+        // Fallback to a default value
+        1
+    }
 }
 
-val (coreCommitCount, coreLatestTag) = FileRepositoryBuilder().setGitDir(rootProject.file(".git/modules/core"))
-    .runCatching {
-        build().use { repo ->
-            val git = Git(repo)
-            val coreCommitCount =
-                git.log()
-                    .add(repo.refDatabase.exactRef("HEAD").objectId)
-                    .call().count() + 4200
-            val ver = git.describe()
-                .setTags(true)
-                .setAbbrev(0).call().removePrefix("v")
-            coreCommitCount to ver
+val commitCount = calculateCommitCount()
+
+fun calculateCoreInfo(): Pair<Int, String> {
+    return try {
+        val coreGitDir = rootProject.file(".git/modules/core")
+        if (coreGitDir.exists()) {
+            val result = FileRepositoryBuilder().setGitDir(coreGitDir)
+                .runCatching {
+                    build().use { repo ->
+                        val git = Git(repo)
+                        val headRef = repo.refDatabase.exactRef("HEAD")?.objectId
+                            ?: repo.resolve("HEAD")
+
+                        val coreCommitCount = if (headRef != null) {
+                            git.log().add(headRef).call().count() + 4200
+                        } else {
+                            git.log().call().count() + 4200
+                        }
+
+                        val ver = try {
+                            git.describe().setTags(true).setAbbrev(0).call().removePrefix("v")
+                        } catch (e: Exception) {
+                            "1.0"
+                        }
+                        coreCommitCount to ver
+                    }
+                }.getOrNull()
+            result ?: (4201 to "1.0")
+        } else {
+            println("Warning: Core submodule not found, using default values")
+            (4201 to "1.0")
         }
-    }.getOrNull() ?: (1 to "1.0")
+    } catch (e: Exception) {
+        println("Warning: Could not determine core module info: ${e.message}")
+        (4201 to "1.0")
+    }
+}
+
+val coreInfoResult = calculateCoreInfo()
+val coreCommitCount = coreInfoResult.first
+val coreLatestTag = coreInfoResult.second
 
 // sync from https://github.com/LSPosed/LSPosed/blob/master/build.gradle.kts
 val defaultManagerPackageName by extra("org.lsposed.opatch")

@@ -34,6 +34,29 @@ public class FileTypeUtils {
         return false;
     }
 
+    public static boolean isXapkFile(String filePath) {
+        String sufix = filePath.substring(filePath.lastIndexOf(".") + 1);
+        if ("xapk".equalsIgnoreCase(sufix)) {
+            return true;
+        }
+        // XAPK files are ZIP files, so they have the same header as ZIP files
+        String fileHeader = getFileHeader(filePath);
+        if ("504B0304".equalsIgnoreCase(fileHeader)) {
+            // Additional check: verify it's actually an XAPK by checking for manifest.json
+            return isValidXapkStructure(filePath);
+        }
+        return false;
+    }
+
+    private static boolean isValidXapkStructure(String filePath) {
+        try (java.util.zip.ZipFile zipFile = new java.util.zip.ZipFile(filePath)) {
+            // Check if manifest.json exists in the XAPK
+            return zipFile.getEntry("manifest.json") != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public static String getFileHeader(String filePath) {
         String cachedHeader = fileHeaderCache.get(filePath);
         if (cachedHeader != null && !cachedHeader.isEmpty()) {
